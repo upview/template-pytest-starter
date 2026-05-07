@@ -1,19 +1,25 @@
 """Pytest starter for TofuPilot — pure pytest, zero imports from us.
 
 Each test function is a phase. Outcome (PASS/FAIL/SKIP/XFAIL) comes
-from pytest itself. The connector parses each test body and, when the
-single assert matches a recognized shape, promotes it to a measurement
-on the dashboard. Description and unit come from the assert message:
+from pytest itself. The connector parses each test body and, for each
+recognized assert, promotes it to a measurement on the dashboard.
+Description and unit come from the assert message:
 
     assert <expr>, "Description [unit]"   # both optional, brackets optional
 
-Recognized assert shapes (one per test, single assignment to the
-identifier under test):
+Recognized assert shapes (each needs its own single
+`<name> = <expr>` assignment before the assert):
   - numeric range, single bound, equality, pytest.approx(abs=...)
   - string equality, string membership in a literal tuple/list
   - boolean equality with True/False
 
-Anything outside those shapes stays a phase-only test (PASS/FAIL only).
+A test can carry multiple measurements as long as each assert binds a
+different identifier to its own assignment. If two asserts target the
+same identifier the connector drops both (the runtime trace can only
+surface one snapshot). Asserts that don't match a recognized shape
+fall through silently — the phase still runs, just without a
+measurement for that line.
+
 For prompts, attachments, multi-dim charts, marginal limits, or
 measurement-rich procedures: use the OpenHTF connector or the
 TofuPilot Framework.
@@ -162,12 +168,42 @@ def test_phase_only_computed_bound():
     assert abs(measured - nominal) / nominal < 0.05
 
 
-def test_phase_only_multiple_asserts():
-    """Two asserts in one test — phase outcome only, no measurement."""
+def test_supply_rail_pair():
+    """Two asserts, two identifiers — emits two measurements in this
+    phase: `voltage` (numeric range) and `current` (single upper
+    bound). Each assert message carries its own description and unit.
+    """
     voltage = 5.01
     current = 0.42
-    assert voltage <= 5.2
-    assert current <= 1.0
+    assert 4.8 <= voltage <= 5.2, "Supply voltage [V]"
+    assert current <= 1.0, "Idle current [A]"
+
+
+def test_boot_health():
+    """Three asserts of mixed shapes in one phase — numeric range,
+    string membership, boolean equality. The phase carries three
+    measurements (`temperature`, `mode`, `power_good`) with their own
+    validators and roll-up.
+    """
+    temperature = 24.5
+    mode = "production"
+    power_good = True
+    assert 0 <= temperature <= 70, "Board temperature [degC]"
+    assert mode in ("production", "staging"), "Build mode"
+    assert power_good == True, "Power-good flag"  # noqa: E712
+
+
+def test_supply_voltage_layered_limits():
+    """Multiple asserts on the SAME identifier stack as additional
+    validators on one measurement (rather than producing duplicate
+    rows). Useful when you want a hard outer range and a tighter
+    nominal bound on the same reading. The first assert seeds the
+    description / unit; later asserts contribute validators only.
+    """
+    voltage = 5.01
+    assert 4.5 <= voltage <= 5.5, "Supply voltage [V]"  # outer guardrail
+    assert voltage >= 4.9                               # nominal min
+    assert voltage <= 5.1                               # nominal max
 
 
 def test_phase_only_method_call():
